@@ -36,7 +36,7 @@ def send_weekly_report():
     # ============================
     surveys = requests.get(SURVEY_API).json()
 
-    df = pd.DataFrame(surveys)
+    df = pd.DataFrame([surveys])
     df['date'] = pd.to_datetime(df['date'])
 
     # Start of week (Monday)
