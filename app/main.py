@@ -34,40 +34,70 @@ def send_weekly_report():
     # ============================
     # 1. Fetch survey data
     # ============================
-    surveys = requests.get(SURVEY_API).json()
+    try:
+        surveys = requests.get(SURVEY_API).json()
+    except Exception as e:
+        return {"error": f"Failed to fetch survey data: {e}"}
 
-    df = pd.DataFrame([surveys])
-    df['date'] = pd.to_datetime(df['date'])
+    # Ensure surveys is ALWAYS a list
+    if isinstance(surveys, dict):
+        surveys = [surveys]
 
-    # Start of week (Monday)
-    week_start = pd.Timestamp.today().normalize() - pd.Timedelta(days=pd.Timestamp.today().weekday())
-    weekly = df[df['date'] >= week_start]
+    if not surveys:
+        return {"error": "No survey data returned from API"}
+
+    df = pd.DataFrame(surveys)
+
+    # Validate required fields
+    required = ["date", "tasks_completed"]
+    for col in required:
+        if col not in df.columns:
+            return {"error": f"Survey data missing required field: {col}"}
+
+    # Convert date column
+    try:
+        df["date"] = pd.to_datetime(df["date"])
+    except:
+        return {"error": "Invalid date format in survey data"}
 
     # ============================
-    # 2. Compute compliance
+    # 2. Filter to current week
+    # ============================
+    today = pd.Timestamp.today().normalize()
+    week_start = today - pd.Timedelta(days=today.weekday())  # Monday
+
+    weekly = df[df["date"] >= week_start]
+
+    # ============================
+    # 3. Compute compliance
     # ============================
     def is_clean(task_dict):
+        if not isinstance(task_dict, dict):
+            return False
         return all(task_dict.values())
 
-    weekly['clean'] = weekly['tasks_completed'].apply(is_clean)
-
-    compliance = round((weekly['clean'].sum() / len(weekly)) * 100, 2) if len(weekly) else 0
+    if len(weekly) == 0:
+        compliance = 0
+    else:
+        weekly["clean"] = weekly["tasks_completed"].apply(is_clean)
+        compliance = round((weekly["clean"].sum() / len(weekly)) * 100, 2)
 
     # ============================
-    # 3. Generate chart
+    # 4. Generate chart
     # ============================
     plt.figure(figsize=(8, 4))
-    weekly.groupby("room")['clean'].mean().plot(kind='bar', color='teal')
-    plt.title("Weekly Room Compliance")
-    plt.ylabel("Compliance %")
-    plt.tight_layout()
+    plt.bar(["Compliance"], [compliance], color="green" if compliance >= 80 else "red")
+    plt.ylim(0, 100)
+    plt.title("Weekly Cleaning Compliance (%)")
+    plt.ylabel("Percentage")
 
     chart_buffer = BytesIO()
-    plt.savefig(chart_buffer, format='png')
+    plt.savefig(chart_buffer, format="png")
     chart_buffer.seek(0)
+    plt.close()
 
     # ============================
-    # 4. Build PDF
+    # 5. Build PDF
     # ============================
     pdf_buffer = BytesIO()
     pdf = canvas.Canvas(pdf_buffer, pagesize=letter)
@@ -87,7 +117,7 @@ def send_weekly_report():
     pdf_buffer.seek(0)
 
     # ============================
-    # 5. Email PDF
+    # 6. Email PDF
     # ============================
     encoded_pdf = base64.b64encode(pdf_buffer.read()).decode()
 
@@ -107,7 +137,14 @@ def send_weekly_report():
 
     message.attachment = attachment
 
-    sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
-    sg.send(message)
+    try:
+        sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
+        sg.send(message)
+    except Exception as e:
+        return {"error": f"Failed to send email: {e}"}
 
-    return {"status": "Weekly report sent"}
+    return {
+        "status": "Weekly report sent",
+        "compliance": compliance,
+        "records_this_week": len(weekly)
+    }
