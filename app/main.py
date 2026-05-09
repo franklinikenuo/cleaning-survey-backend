@@ -8,7 +8,9 @@ import base64
 from io import BytesIO
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
+from datetime import datetime
 import os
+import json
 import requests
 
 app = FastAPI()
@@ -21,30 +23,68 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SURVEY_API = "https://cleaning-survey-api.onrender.com/survey"
+SURVEY_FILE = "surveys.json"
+
+# Ensure survey storage file exists
+if not os.path.exists(SURVEY_FILE):
+    with open(SURVEY_FILE, "w") as f:
+        json.dump([], f)
 
 
+# ============================
+# 0. Health Check
+# ============================
 @app.get("/")
 def root():
     return {"status": "Backend running"}
 
 
+# ============================
+# 1. Submit Survey
+# ============================
+@app.post("/survey")
+def submit_survey(survey: dict):
+    # Add timestamp
+    survey["date"] = datetime.utcnow().isoformat()
+
+    # Load existing surveys
+    with open(SURVEY_FILE, "r") as f:
+        data = json.load(f)
+
+    # Add new survey
+    data.append(survey)
+
+    # Save back to file
+    with open(SURVEY_FILE, "w") as f:
+        json.dump(data, f)
+
+    return {"status": "Survey saved", "survey": survey}
+
+
+# ============================
+# 2. Get All Surveys
+# ============================
+@app.get("/survey")
+def get_surveys():
+    with open(SURVEY_FILE, "r") as f:
+        data = json.load(f)
+    return data
+
+
+# ============================
+# 3. Weekly Report
+# ============================
 @app.get("/send-weekly-report")
 def send_weekly_report():
-    # ============================
-    # 1. Fetch survey data
-    # ============================
+    # Load surveys
     try:
-        surveys = requests.get(SURVEY_API).json()
-    except Exception as e:
-        return {"error": f"Failed to fetch survey data: {e}"}
-
-    # Ensure surveys is ALWAYS a list
-    if isinstance(surveys, dict):
-        surveys = [surveys]
+        with open(SURVEY_FILE, "r") as f:
+            surveys = json.load(f)
+    except:
+        return {"error": "Could not read survey data"}
 
     if not surveys:
-        return {"error": "No survey data returned from API"}
+        return {"error": "No survey data available"}
 
     df = pd.DataFrame(surveys)
 
@@ -60,17 +100,12 @@ def send_weekly_report():
     except:
         return {"error": "Invalid date format in survey data"}
 
-    # ============================
-    # 2. Filter to current week
-    # ============================
+    # Filter to current week (Monday → today)
     today = pd.Timestamp.today().normalize()
-    week_start = today - pd.Timedelta(days=today.weekday())  # Monday
-
+    week_start = today - pd.Timedelta(days=today.weekday())
     weekly = df[df["date"] >= week_start]
 
-    # ============================
-    # 3. Compute compliance
-    # ============================
+    # Compute compliance
     def is_clean(task_dict):
         if not isinstance(task_dict, dict):
             return False
@@ -82,9 +117,7 @@ def send_weekly_report():
         weekly["clean"] = weekly["tasks_completed"].apply(is_clean)
         compliance = round((weekly["clean"].sum() / len(weekly)) * 100, 2)
 
-    # ============================
-    # 4. Generate chart
-    # ============================
+    # Generate chart
     plt.figure(figsize=(8, 4))
     plt.bar(["Compliance"], [compliance], color="green" if compliance >= 80 else "red")
     plt.ylim(0, 100)
@@ -96,9 +129,7 @@ def send_weekly_report():
     chart_buffer.seek(0)
     plt.close()
 
-    # ============================
-    # 5. Build PDF
-    # ============================
+    # Build PDF
     pdf_buffer = BytesIO()
     pdf = canvas.Canvas(pdf_buffer, pagesize=letter)
 
@@ -109,16 +140,13 @@ def send_weekly_report():
     pdf.drawString(50, 730, f"Compliance: {compliance}%")
     pdf.drawString(50, 715, f"Total Submissions: {len(weekly)}")
 
-    # Insert chart
     pdf.drawImage(chart_buffer, 50, 450, width=500, height=250)
 
     pdf.showPage()
     pdf.save()
     pdf_buffer.seek(0)
 
-    # ============================
-    # 6. Email PDF
-    # ============================
+    # Email PDF
     encoded_pdf = base64.b64encode(pdf_buffer.read()).decode()
 
     message = Mail(
