@@ -125,7 +125,7 @@ def email_pdf(filename: str, subject: str, message_text: str):
         encoded = base64.b64encode(f.read()).decode()
 
     message = Mail(
-        from_email="no-reply@cleaning-system.com",
+        from_email="franklin.ikenuo@gdi.com",
         to_emails="YOUR_EMAIL@domain.com",
         subject=subject,
         html_content=message_text
