@@ -126,7 +126,7 @@ def email_pdf(filename: str, subject: str, message_text: str):
 
     message = Mail(
         from_email="franklin.ikenuo@gdi.com",
-        to_emails="YOUR_EMAIL@domain.com",
+        to_emails="franklin.ikenuo@gdi.com",
         subject=subject,
         html_content=message_text
     )
