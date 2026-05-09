@@ -2,16 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
-import matplotlib.pyplot as plt
-import pandas as pd
+from fpdf import FPDF
+from datetime import datetime, timedelta
 import base64
-from io import BytesIO
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
-from datetime import datetime
-import os
 import json
-import requests
+import os
 
 app = FastAPI()
 
@@ -44,17 +39,13 @@ def root():
 # ============================
 @app.post("/survey")
 def submit_survey(survey: dict):
-    # Add timestamp
     survey["date"] = datetime.utcnow().isoformat()
 
-    # Load existing surveys
     with open(SURVEY_FILE, "r") as f:
         data = json.load(f)
 
-    # Add new survey
     data.append(survey)
 
-    # Save back to file
     with open(SURVEY_FILE, "w") as f:
         json.dump(data, f)
 
@@ -72,93 +63,77 @@ def get_surveys():
 
 
 # ============================
-# 3. Weekly Report
+# Helper: Load surveys safely
 # ============================
-@app.get("/send-weekly-report")
-def send_weekly_report():
-    # Load surveys
+def load_surveys():
     try:
         with open(SURVEY_FILE, "r") as f:
-            surveys = json.load(f)
+            return json.load(f)
     except:
-        return {"error": "Could not read survey data"}
+        return []
+
+
+# ============================
+# Helper: Filter surveys by days
+# ============================
+def filter_surveys(days: int):
+    surveys = load_surveys()
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    filtered = []
+    for s in surveys:
+        try:
+            date = datetime.fromisoformat(s["date"])
+            if date >= cutoff:
+                filtered.append(s)
+        except:
+            continue
+
+    return filtered
+
+
+# ============================
+# Helper: Generate PDF
+# ============================
+def generate_pdf(title: str, surveys: list, filename: str):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=14)
+
+    pdf.cell(200, 10, txt=title, ln=True, align="C")
+    pdf.ln(5)
 
     if not surveys:
-        return {"error": "No survey data available"}
-
-    df = pd.DataFrame(surveys)
-
-    # Validate required fields
-    required = ["date", "tasks_completed"]
-    for col in required:
-        if col not in df.columns:
-            return {"error": f"Survey data missing required field: {col}"}
-
-    # Convert date column
-    try:
-        df["date"] = pd.to_datetime(df["date"])
-    except:
-        return {"error": "Invalid date format in survey data"}
-
-    # Filter to current week (Monday → today)
-    today = pd.Timestamp.today().normalize()
-    week_start = today - pd.Timedelta(days=today.weekday())
-    weekly = df[df["date"] >= week_start]
-
-    # Compute compliance
-    def is_clean(task_dict):
-        if not isinstance(task_dict, dict):
-            return False
-        return all(task_dict.values())
-
-    if len(weekly) == 0:
-        compliance = 0
+        pdf.set_font("Arial", size=12)
+        pdf.cell(200, 10, txt="No survey data available.", ln=True)
     else:
-        weekly["clean"] = weekly["tasks_completed"].apply(is_clean)
-        compliance = round((weekly["clean"].sum() / len(weekly)) * 100, 2)
+        for s in surveys:
+            clean = all(s["tasks_completed"].values())
+            line = f"{s['room']} - {'Clean' if clean else 'Not Clean'} - {s['date']}"
+            pdf.set_font("Arial", size=11)
+            pdf.cell(200, 8, txt=line, ln=True)
 
-    # Generate chart
-    plt.figure(figsize=(8, 4))
-    plt.bar(["Compliance"], [compliance], color="green" if compliance >= 80 else "red")
-    plt.ylim(0, 100)
-    plt.title("Weekly Cleaning Compliance (%)")
-    plt.ylabel("Percentage")
+    pdf.output(filename)
+    return filename
 
-    chart_buffer = BytesIO()
-    plt.savefig(chart_buffer, format="png")
-    chart_buffer.seek(0)
-    plt.close()
 
-    # Build PDF
-    pdf_buffer = BytesIO()
-    pdf = canvas.Canvas(pdf_buffer, pagesize=letter)
-
-    pdf.setFont("Helvetica-Bold", 16)
-    pdf.drawString(50, 750, "Weekly Cleaning Report")
-
-    pdf.setFont("Helvetica", 12)
-    pdf.drawString(50, 730, f"Compliance: {compliance}%")
-    pdf.drawString(50, 715, f"Total Submissions: {len(weekly)}")
-
-    pdf.drawImage(chart_buffer, 50, 450, width=500, height=250)
-
-    pdf.showPage()
-    pdf.save()
-    pdf_buffer.seek(0)
-
-    # Email PDF
-    encoded_pdf = base64.b64encode(pdf_buffer.read()).decode()
+# ============================
+# Helper: Email PDF
+# ============================
+def email_pdf(filename: str, subject: str, message_text: str):
+    with open(filename, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode()
 
     message = Mail(
         from_email="no-reply@cleaning-system.com",
         to_emails="YOUR_EMAIL@domain.com",
-        subject="Weekly Cleaning Report",
-        html_content="Attached is your weekly cleaning report."
+        subject=subject,
+        html_content=message_text
     )
 
     attachment = Attachment(
-        FileContent(encoded_pdf),
-        FileName("weekly_report.pdf"),
+        FileContent(encoded),
+        FileName(filename),
         FileType("application/pdf"),
         Disposition("attachment")
     )
@@ -168,11 +143,42 @@ def send_weekly_report():
     try:
         sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
         sg.send(message)
+        return True
     except Exception as e:
-        return {"error": f"Failed to send email: {e}"}
+        return str(e)
 
-    return {
-        "status": "Weekly report sent",
-        "compliance": compliance,
-        "records_this_week": len(weekly)
-    }
+
+# ============================
+# 3. Weekly Report
+# ============================
+@app.get("/send-weekly-report")
+def send_weekly_report():
+    weekly = filter_surveys(7)
+    filename = "weekly_report.pdf"
+
+    generate_pdf("Weekly Cleaning Report", weekly, filename)
+
+    result = email_pdf(filename, "Weekly Cleaning Report", "Attached is your weekly cleaning report.")
+
+    if result is True:
+        return {"status": "Weekly report sent", "records": len(weekly)}
+    else:
+        return {"error": result}
+
+
+# ============================
+# 4. Monthly Report
+# ============================
+@app.get("/send-monthly-report")
+def send_monthly_report():
+    monthly = filter_surveys(30)
+    filename = "monthly_report.pdf"
+
+    generate_pdf("Monthly Cleaning Report", monthly, filename)
+
+    result = email_pdf(filename, "Monthly Cleaning Report", "Attached is your monthly cleaning report.")
+
+    if result is True:
+        return {"status": "Monthly report sent", "records": len(monthly)}
+    else:
+        return {"error": result}
