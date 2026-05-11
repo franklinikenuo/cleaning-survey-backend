@@ -1,16 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
-from fpdf import FPDF
-from datetime import datetime, timedelta
-import base64
+from pydantic import BaseModel, Field
+from typing import Optional
+import datetime
 import json
 import os
 
 app = FastAPI()
 
-# Allow dashboard to call backend
+# Allow dashboard + survey to call backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,16 +16,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SURVEY_FILE = "surveys.json"
+# ============================
+# STORAGE FILE
+# ============================
+DATA_FILE = "submissions.json"
 
-# Ensure survey storage file exists
-if not os.path.exists(SURVEY_FILE):
-    with open(SURVEY_FILE, "w") as f:
-        json.dump([], f)
+# Create file if missing
+if not os.path.exists(DATA_FILE):
+    with open(DATA_FILE, "w") as f:
+        json.dump([], f, indent=2)
 
 
 # ============================
-# 0. Health Check
+# STRICT DATA MODELS
+# ============================
+
+class Tasks(BaseModel):
+    floor_cleaned: bool = False
+    trash_removed: bool = False
+    surfaces_wiped: bool = False
+    equipment_sanitized: bool = False
+    supplies_restocked: bool = False
+    sweep: bool = False
+    linen_change: bool = False
+    vacuum: bool = False
+
+class SurveyData(BaseModel):
+    room: str = Field(..., min_length=1)
+    staff_name: str = Field(..., min_length=1)
+    shift: str = Field(..., regex="^(Morning|Evening|Night)$")
+    tasks_completed: Tasks
+    notes: Optional[str] = ""
+
+
+# ============================
+# STORAGE HELPERS
+# ============================
+
+def load_data():
+    try:
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return []
+
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+# ============================
+# HEALTH CHECK
 # ============================
 @app.get("/")
 def root():
@@ -35,150 +74,46 @@ def root():
 
 
 # ============================
-# 1. Submit Survey
+# SUBMIT SURVEY
 # ============================
-@app.post("/survey")
-def submit_survey(survey: dict):
-    survey["date"] = datetime.utcnow().isoformat()
+@app.post("/submit")
+async def submit_survey(data: SurveyData):
+    submissions = load_data()
 
-    with open(SURVEY_FILE, "r") as f:
-        data = json.load(f)
+    entry = {
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "room": data.room,
+        "staff_name": data.staff_name,
+        "shift": data.shift,
+        "tasks_completed": data.tasks_completed.dict(),
+        "notes": data.notes or ""
+    }
 
-    data.append(survey)
+    submissions.append(entry)
+    save_data(submissions)
 
-    with open(SURVEY_FILE, "w") as f:
-        json.dump(data, f)
-
-    return {"status": "Survey saved", "survey": survey}
-
-
-# ============================
-# 2. Get All Surveys
-# ============================
-@app.get("/survey")
-def get_surveys():
-    with open(SURVEY_FILE, "r") as f:
-        data = json.load(f)
-    return data
+    return {"status": "success", "message": "Survey saved", "entry": entry}
 
 
 # ============================
-# Helper: Load surveys safely
+# GET ALL SUBMISSIONS
 # ============================
-def load_surveys():
-    try:
-        with open(SURVEY_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return []
+@app.get("/submissions")
+async def get_submissions():
+    return load_data()
 
 
 # ============================
-# Helper: Filter surveys by days
-# ============================
-def filter_surveys(days: int):
-    surveys = load_surveys()
-    cutoff = datetime.utcnow() - timedelta(days=days)
-
-    filtered = []
-    for s in surveys:
-        try:
-            date = datetime.fromisoformat(s["date"])
-            if date >= cutoff:
-                filtered.append(s)
-        except:
-            continue
-
-    return filtered
-
-
-# ============================
-# Helper: Generate PDF
-# ============================
-def generate_pdf(title: str, surveys: list, filename: str):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=14)
-
-    pdf.cell(200, 10, txt=title, ln=True, align="C")
-    pdf.ln(5)
-
-    if not surveys:
-        pdf.set_font("Arial", size=12)
-        pdf.cell(200, 10, txt="No survey data available.", ln=True)
-    else:
-        for s in surveys:
-            clean = all(s["tasks_completed"].values())
-            line = f"{s['room']} - {'Clean' if clean else 'Not Clean'} - {s['date']}"
-            pdf.set_font("Arial", size=11)
-            pdf.cell(200, 8, txt=line, ln=True)
-
-    pdf.output(filename)
-    return filename
-
-
-# ============================
-# Helper: Email PDF
-# ============================
-def email_pdf(filename: str, subject: str, message_text: str):
-    with open(filename, "rb") as f:
-        encoded = base64.b64encode(f.read()).decode()
-
-    message = Mail(
-        from_email="franklin.ikenuo@gdi.com",
-        to_emails="franklin.ikenuo@gdi.com",
-        subject=subject,
-        html_content=message_text
-    )
-
-    attachment = Attachment(
-        FileContent(encoded),
-        FileName(filename),
-        FileType("application/pdf"),
-        Disposition("attachment")
-    )
-
-    message.attachment = attachment
-
-    try:
-        sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
-        sg.send(message)
-        return True
-    except Exception as e:
-        return str(e)
-
-
-# ============================
-# 3. Weekly Report
+# WEEKLY REPORT (placeholder)
 # ============================
 @app.get("/send-weekly-report")
-def send_weekly_report():
-    weekly = filter_surveys(7)
-    filename = "weekly_report.pdf"
-
-    generate_pdf("Weekly Cleaning Report", weekly, filename)
-
-    result = email_pdf(filename, "Weekly Cleaning Report", "Attached is your weekly cleaning report.")
-
-    if result is True:
-        return {"status": "Weekly report sent", "records": len(weekly)}
-    else:
-        return {"error": result}
+async def weekly_report():
+    return {"status": "ok", "message": "Weekly report endpoint ready"}
 
 
 # ============================
-# 4. Monthly Report
+# MONTHLY REPORT (placeholder)
 # ============================
 @app.get("/send-monthly-report")
-def send_monthly_report():
-    monthly = filter_surveys(30)
-    filename = "monthly_report.pdf"
-
-    generate_pdf("Monthly Cleaning Report", monthly, filename)
-
-    result = email_pdf(filename, "Monthly Cleaning Report", "Attached is your monthly cleaning report.")
-
-    if result is True:
-        return {"status": "Monthly report sent", "records": len(monthly)}
-    else:
-        return {"error": result}
+async def monthly_report():
+    return {"status": "ok", "message": "Monthly report endpoint ready"}
