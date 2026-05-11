@@ -1,7 +1,4 @@
 fastapi
 uvicorn
 pydantic
-sendgrid
-fpdf
-requests
-python-dotenv
+python-multipart
