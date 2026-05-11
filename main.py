@@ -44,7 +44,7 @@ class Tasks(BaseModel):
 class SurveyData(BaseModel):
     room: str = Field(..., min_length=1)
     staff_name: str = Field(..., min_length=1)
-    shift: str = Field(..., regex="^(Morning|Evening|Night)$")
+    shift: str = Field(..., pattern="^(Morning|Evening|Night)$")
     tasks_completed: Tasks
     notes: Optional[str] = ""
 
