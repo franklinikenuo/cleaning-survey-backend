@@ -3,5 +3,7 @@ fpdf==1.7.2
 fastapi==0.95.2
 uvicorn==0.22.0
 pydantic==1.10.15
-pydantic-core==2.14.6
 python-multipart
+python-dotenv
+requests
+aiofiles
