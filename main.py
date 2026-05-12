@@ -96,10 +96,18 @@ async def submit_survey(data: SurveyData):
 
 
 # ============================
-# GET ALL SUBMISSIONS
+# GET ALL SUBMISSIONS (original)
 # ============================
 @app.get("/submissions")
 async def get_submissions():
+    return load_data()
+
+
+# ============================
+# GET ALL (dashboard endpoint)
+# ============================
+@app.get("/all")
+async def get_all():
     return load_data()
 
 
