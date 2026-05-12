@@ -5,17 +5,18 @@ from typing import Optional
 import datetime
 import json
 import os
+import base64
 
-# PDF generation
 from fpdf import FPDF
 
-# Email (SendGrid)
 import sendgrid
-from sendgrid.helpers.mail import Mail, Email, To, Content, Attachment, FileContent, FileName, FileType, Disposition
+from sendgrid.helpers.mail import (
+    Mail, Email, To, Content,
+    Attachment, FileContent, FileName, FileType, Disposition
+)
 
 app = FastAPI()
 
-# Allow dashboard + survey to call backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,19 +24,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ============================
-# STORAGE FILE
-# ============================
 DATA_FILE = "submissions.json"
 
-# Create file if missing
 if not os.path.exists(DATA_FILE):
     with open(DATA_FILE, "w") as f:
         json.dump([], f, indent=2)
 
 
 # ============================
-# STRICT DATA MODELS
+# DATA MODELS
 # ============================
 
 class Tasks(BaseModel):
@@ -75,6 +72,7 @@ def save_data(data):
 # ============================
 # HEALTH CHECK
 # ============================
+
 @app.get("/")
 def root():
     return {"status": "Backend running"}
@@ -83,6 +81,7 @@ def root():
 # ============================
 # SUBMIT SURVEY
 # ============================
+
 @app.post("/submit")
 async def submit_survey(data: SurveyData):
     submissions = load_data()
@@ -105,14 +104,12 @@ async def submit_survey(data: SurveyData):
 # ============================
 # GET ALL SUBMISSIONS
 # ============================
+
 @app.get("/submissions")
 async def get_submissions():
     return load_data()
 
 
-# ============================
-# GET ALL (dashboard endpoint)
-# ============================
 @app.get("/all")
 async def get_all():
     return load_data()
@@ -121,6 +118,7 @@ async def get_all():
 # ============================
 # PDF GENERATOR
 # ============================
+
 def generate_weekly_pdf(submissions):
     pdf = FPDF()
     pdf.add_page()
@@ -145,19 +143,19 @@ def generate_weekly_pdf(submissions):
 
 
 # ============================
-# WEEKLY REPORT WITH PDF EMAIL
+# WEEKLY REPORT EMAIL
 # ============================
+
 @app.get("/send-weekly-report")
 async def send_weekly_report():
     try:
         submissions = load_data()
         pdf_file = generate_weekly_pdf(submissions)
 
-        # Read PDF for attachment
         with open(pdf_file, "rb") as f:
             pdf_data = f.read()
 
-        encoded_pdf = pdf_data.encode("base64") if hasattr(pdf_data, "encode") else pdf_data
+        encoded_pdf = base64.b64encode(pdf_data).decode()
 
         sg = sendgrid.SendGridAPIClient(api_key=os.getenv("SENDGRID_API_KEY"))
 
@@ -166,11 +164,12 @@ async def send_weekly_report():
         subject = "Weekly Cleaning Report (PDF Attached)"
         content = Content("text/plain", "Your weekly cleaning report is attached.")
 
-        attachment = Attachment()
-        attachment.file_content = FileContent(pdf_data)
-        attachment.file_type = FileType("application/pdf")
-        attachment.file_name = FileName("weekly_report.pdf")
-        attachment.disposition = Disposition("attachment")
+        attachment = Attachment(
+            FileContent(encoded_pdf),
+            FileName("weekly_report.pdf"),
+            FileType("application/pdf"),
+            Disposition("attachment")
+        )
 
         mail = Mail(from_email, to_email, subject, content)
         mail.attachment = attachment
@@ -188,8 +187,9 @@ async def send_weekly_report():
 
 
 # ============================
-# MONTHLY REPORT (placeholder)
+# MONTHLY REPORT PLACEHOLDER
 # ============================
+
 @app.get("/send-monthly-report")
 async def monthly_report():
     return {"status": "ok", "message": "Monthly report endpoint ready"}
