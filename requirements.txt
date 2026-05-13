@@ -7,3 +7,5 @@ python-multipart
 python-dotenv
 requests
 aiofiles
+sqlalchemy
+psycopg2-binary
