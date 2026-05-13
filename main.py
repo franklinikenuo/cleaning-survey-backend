@@ -1,16 +1,45 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from datetime import datetime, timedelta
-import json
+from sqlalchemy import create_engine, Column, Integer, String, JSON, TIMESTAMP, text
+from sqlalchemy.orm import sessionmaker, declarative_base
+from datetime import datetime
 import os
-from fpdf import FPDF
-import sendgrid
-from sendgrid.helpers.mail import Mail
 
+# -----------------------------
+# Database Setup
+# -----------------------------
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise Exception("DATABASE_URL is not set in environment variables")
+
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# -----------------------------
+# Database Model
+# -----------------------------
+class Submission(Base):
+    __tablename__ = "submissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    room = Column(String)
+    staff_name = Column(String)
+    shift = Column(String)
+    tasks_completed = Column(JSON)
+    notes = Column(String)
+    timestamp = Column(TIMESTAMP, server_default=text("NOW()"))
+
+# Create table if not exists
+Base.metadata.create_all(bind=engine)
+
+# -----------------------------
+# FastAPI Setup
+# -----------------------------
 app = FastAPI()
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,174 +48,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATA_FILE = "submissions.json"
-
-# Ensure file exists
-if not os.path.exists(DATA_FILE):
-    with open(DATA_FILE, "w") as f:
-        json.dump([], f)
-
-
 # -----------------------------
-# MODELS
+# Request Model
 # -----------------------------
-class Tasks(BaseModel):
-    floor_cleaned: bool
-    trash_removed: bool
-    surfaces_wiped: bool
-    equipment_sanitized: bool
-    supplies_restocked: bool
-    swept: bool
-    linen_change: bool
-    vacuum: bool
-
-
-class Submission(BaseModel):
+class SubmissionRequest(BaseModel):
     room: str
     staff_name: str
     shift: str
-    tasks_completed: Tasks
-    notes: str = ""
-
-
-# -----------------------------
-# ROOT (HEALTH CHECK)
-# -----------------------------
-@app.get("/")
-def root():
-    return {"status": "Backend running"}
-
+    tasks_completed: dict
+    notes: str | None = None
 
 # -----------------------------
-# SUBMIT CLEANING SURVEY
+# Routes
 # -----------------------------
 @app.post("/submit")
-def submit_survey(submission: Submission):
-    with open(DATA_FILE, "r") as f:
-        data = json.load(f)
+def submit_data(data: SubmissionRequest):
+    db = SessionLocal()
+    try:
+        new_entry = Submission(
+            room=data.room,
+            staff_name=data.staff_name,
+            shift=data.shift,
+            tasks_completed=data.tasks_completed,
+            notes=data.notes
+        )
+        db.add(new_entry)
+        db.commit()
+        db.refresh(new_entry)
+        return {"status": "success", "id": new_entry.id}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
 
-    entry = submission.dict()
-    entry["timestamp"] = datetime.now().isoformat()
 
-    data.append(entry)
-
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=4)
-
-    return {"message": "Submission saved", "data": entry}
-
-
-# -----------------------------
-# GET ALL SUBMISSIONS
-# -----------------------------
 @app.get("/submissions")
 def get_submissions():
-    with open(DATA_FILE, "r") as f:
-        data = json.load(f)
-    return data
+    db = SessionLocal()
+    try:
+        entries = db.query(Submission).order_by(Submission.timestamp.desc()).all()
+        return entries
+    finally:
+        db.close()
 
 
-# ⭐ NEW — HEAD ROUTE FOR UPTIMEROBOT
-@app.head("/submissions")
-def submissions_head():
-    return {"status": "Backend running"}
-
-
-# -----------------------------
-# GET ALL (ALIAS)
-# -----------------------------
-@app.get("/all")
-def get_all():
-    with open(DATA_FILE, "r") as f:
-        data = json.load(f)
-    return data
-
-
-# -----------------------------
-# PDF GENERATION
-# -----------------------------
-def generate_pdf_report(title, entries):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-
-    pdf.cell(200, 10, txt=title, ln=True, align="C")
-    pdf.ln(5)
-
-    for entry in entries:
-        pdf.multi_cell(0, 8, txt=f"Room: {entry['room']}")
-        pdf.multi_cell(0, 8, txt=f"Staff: {entry['staff_name']}")
-        pdf.multi_cell(0, 8, txt=f"Shift: {entry['shift']}")
-        pdf.multi_cell(0, 8, txt=f"Timestamp: {entry['timestamp']}")
-        pdf.multi_cell(0, 8, txt=f"Tasks: {entry['tasks_completed']}")
-        pdf.multi_cell(0, 8, txt=f"Notes: {entry['notes']}")
-        pdf.ln(5)
-
-    filename = f"{title.replace(' ', '_')}.pdf"
-    pdf.output(filename)
-    return filename
-
-
-# -----------------------------
-# WEEKLY REPORT
-# -----------------------------
-@app.get("/weekly-report")
-def weekly_report():
-    with open(DATA_FILE, "r") as f:
-        data = json.load(f)
-
-    one_week_ago = datetime.now() - timedelta(days=7)
-    filtered = [d for d in data if datetime.fromisoformat(d["timestamp"]) >= one_week_ago]
-
-    if not filtered:
-        raise HTTPException(status_code=404, detail="No submissions in the last week")
-
-    filename = generate_pdf_report("Weekly Report", filtered)
-    return {"message": "Weekly report generated", "file": filename}
-
-
-# -----------------------------
-# MONTHLY REPORT
-# -----------------------------
-@app.get("/monthly-report")
-def monthly_report():
-    with open(DATA_FILE, "r") as f:
-        data = json.load(f)
-
-    one_month_ago = datetime.now() - timedelta(days=30)
-    filtered = [d for d in data if datetime.fromisoformat(d["timestamp"]) >= one_month_ago]
-
-    if not filtered:
-        raise HTTPException(status_code=404, detail="No submissions in the last month")
-
-    filename = generate_pdf_report("Monthly Report", filtered)
-    return {"message": "Monthly report generated", "file": filename}
-
-
-# -----------------------------
-# SENDGRID EMAIL (OPTIONAL)
-# -----------------------------
-@app.post("/send-report")
-def send_report(email: str, report_type: str):
-    sg = sendgrid.SendGridAPIClient(api_key=os.getenv("SENDGRID_API_KEY"))
-
-    filename = f"{report_type}.pdf"
-    if not os.path.exists(filename):
-        raise HTTPException(status_code=404, detail="Report not found")
-
-    message = Mail(
-        from_email="noreply@cleaning-survey.com",
-        to_emails=email,
-        subject=f"{report_type} Report",
-        html_content=f"Attached is your {report_type} report."
-    )
-
-    with open(filename, "rb") as f:
-        message.add_attachment(
-            f.read(),
-            "application/pdf",
-            filename
-        )
-
-    sg.send(message)
-    return {"message": "Email sent"}
+@app.get("/")
+def root():
+    return {"message": "Cleaning Survey API with PostgreSQL is running"}
