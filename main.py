@@ -91,6 +91,11 @@ def get_submissions():
         return entries
     finally:
         db.close()
+        
+        from fastapi import Response
+@app.head("/submissions")
+def head_submissions():
+    return Response(status_code=200)
 
 
 @app.get("/")
