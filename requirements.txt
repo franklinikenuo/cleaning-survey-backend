@@ -6,7 +6,7 @@ python-multipart
 python-dotenv
 
 sqlalchemy==1.4.52
-psycopg2-binary
+psycopg2-binary==2.9.9
 
 requests
 aiofiles
