@@ -1,44 +1,45 @@
-from fastapi import FastAPI, HTTPException,  Response
-from fastapi import Response
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from fastapi.templating import Jinja2Templates
+
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String, JSON, TIMESTAMP, text
-from sqlalchemy.orm import sessionmaker, declarative_base
+from typing import List
 from datetime import datetime
-import os
 
-# -----------------------------
-# Database Setup
-# -----------------------------
-DATABASE_URL = os.getenv("DATABASE_URL")
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, JSON
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 
-if not DATABASE_URL:
-    raise Exception("DATABASE_URL is not set in environment variables")
+from weasyprint import HTML
+import io
+
+# ------------------------------------------------------------
+# DATABASE SETUP
+# ------------------------------------------------------------
+DATABASE_URL = "postgresql://postgres:postgres@db:5432/postgres"
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# -----------------------------
-# Database Model
-# -----------------------------
+
 class Submission(Base):
     __tablename__ = "submissions"
 
     id = Column(Integer, primary_key=True, index=True)
     room = Column(String)
-    staff_name = Column(String)
     shift = Column(String)
+    staff = Column(String)
     tasks_completed = Column(JSON)
-    notes = Column(String)
-    timestamp = Column(TIMESTAMP, server_default=text("NOW()"))
+    timestamp = Column(DateTime, default=datetime.utcnow)
 
-# Create table if not exists
+
 Base.metadata.create_all(bind=engine)
 
-# -----------------------------
-# FastAPI Setup
-# -----------------------------
+# ------------------------------------------------------------
+# FASTAPI APP
+# ------------------------------------------------------------
 app = FastAPI()
 
 app.add_middleware(
@@ -49,77 +50,92 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -----------------------------
-# Request Model
-# -----------------------------
+# Load templates
+templates = Jinja2Templates(directory="app/app/templates")
+
+# ------------------------------------------------------------
+# REQUEST MODELS
+# ------------------------------------------------------------
 class SubmissionRequest(BaseModel):
     room: str
-    staff_name: str
     shift: str
-    tasks_completed: dict
-    notes: str | None = None
+    staff: str
+    tasks_completed: List[str]
 
-# -----------------------------
-# Routes
-# -----------------------------
+# ------------------------------------------------------------
+# ROUTES
+# ------------------------------------------------------------
+
 @app.post("/submit")
-def submit_data(data: SubmissionRequest):
+def submit_form(data: SubmissionRequest):
     db = SessionLocal()
-    try:
-        new_entry = Submission(
-            room=data.room,
-            staff_name=data.staff_name,
-            shift=data.shift,
-            tasks_completed=data.tasks_completed,
-            notes=data.notes
-        )
-        db.add(new_entry)
-        db.commit()
-        db.refresh(new_entry)
-        return {"status": "success", "id": new_entry.id}
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
+    new_entry = Submission(
+        room=data.room,
+        shift=data.shift,
+        staff=data.staff,
+        tasks_completed=data.tasks_completed,
+    )
+    db.add(new_entry)
+    db.commit()
+    db.refresh(new_entry)
+    return {"message": "Submission saved", "id": new_entry.id}
 
 
-@app.get("/submissions")
-def get_submissions():
+@app.get("/all")
+def get_all():
     db = SessionLocal()
-    try:
-        entries = db.query(Submission).order_by(Submission.timestamp.desc()).all()
-        return entries
-    finally:
-        db.close()
-        
-@app.head("/submissions")
-def head_submissions():
-    return Response(status_code=200)
+    entries = db.query(Submission).all()
+    return entries
+
+
+@app.head("/")
+def head_check():
+    return {"status": "ok"}
 
 
 @app.get("/")
 def root():
     return {"message": "Cleaning Survey API with PostgreSQL is running"}
-    
 
 # ------------------------------------------------------------
-# PDF EXPORT ROUTE (WeasyPrint)
+# PDF EXPORT ROUTE
 # ------------------------------------------------------------
-from fastapi.responses import StreamingResponse
-from weasyprint import HTML
-import io
-
 @app.get("/export/pdf")
-def export_pdf():
-    html_content = """
-    <h1>Cleaning Compliance Dashboard</h1>
-    <p>This is a test PDF export using WeasyPrint.</p>
-    """
-    pdf = HTML(string=html_content).write_pdf()
+def export_pdf(request: Request):
+    db = SessionLocal()
+    submissions = db.query(Submission).all()
+
+    total_submissions = len(submissions)
+
+    # Average tasks
+    if total_submissions > 0:
+        avg_tasks = sum(len(s.tasks_completed) for s in submissions) / total_submissions
+    else:
+        avg_tasks = 0
+
+    # Shift counts
+    shift_counts = {}
+    for s in submissions:
+        shift_counts[s.shift] = shift_counts.get(s.shift, 0) + 1
+
+    top_shift = max(shift_counts, key=shift_counts.get) if shift_counts else "N/A"
+
+    # Placeholder compliance (can be replaced with real logic)
+    overall_compliance = 92
+
+    # Render HTML template
+    html_content = templates.get_template("dashboard_pdf.html").render({
+        "overall_compliance": overall_compliance,
+        "total_submissions": total_submissions,
+        "top_shift": top_shift,
+        "avg_tasks": round(avg_tasks, 2)
+    })
+
+    # Generate PDF
+    pdf_bytes = HTML(string=html_content).write_pdf()
 
     return StreamingResponse(
-        io.BytesIO(pdf),
+        io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=dashboard.pdf"}
+        headers={"Content-Disposition": "attachment; filename=cleaning_dashboard.pdf"}
     )
