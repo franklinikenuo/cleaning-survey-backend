@@ -10,3 +10,4 @@ aiofiles
 sqlalchemy
 psycopg2-binary
 weasyprint
+jinja2==3.1.4
