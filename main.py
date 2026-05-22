@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException,  Response
+from fastapi import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, JSON, TIMESTAMP, text
@@ -92,7 +93,6 @@ def get_submissions():
     finally:
         db.close()
         
-        from fastapi import Response
 @app.head("/submissions")
 def head_submissions():
     return Response(status_code=200)
