@@ -4,28 +4,23 @@ from fastapi.responses import StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from pydantic import BaseModel
-from typing import List
+from typing import Dict
 from datetime import datetime
 
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, JSON
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, declarative_base
 
 from weasyprint import HTML
 import io
+import os
 
 # ------------------------------------------------------------
 # DATABASE SETUP
 # ------------------------------------------------------------
 
-import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -38,6 +33,7 @@ class Submission(Base):
     shift = Column(String)
     staff = Column(String)
     tasks_completed = Column(JSON)
+    notes = Column(String, default="")
     timestamp = Column(DateTime, default=datetime.utcnow)
 
 
@@ -46,6 +42,7 @@ Base.metadata.create_all(bind=engine)
 # ------------------------------------------------------------
 # FASTAPI APP
 # ------------------------------------------------------------
+
 app = FastAPI()
 
 app.add_middleware(
@@ -56,17 +53,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load templates
 templates = Jinja2Templates(directory="app/app/templates")
 
 # ------------------------------------------------------------
-# REQUEST MODELS
+# REQUEST MODEL
 # ------------------------------------------------------------
+
 class SubmissionRequest(BaseModel):
     room: str
     shift: str
     staff: str
-    tasks_completed: List[str]
+    tasks_completed: Dict[str, str]   # Y / N / NA
+    notes: str = ""
+
+# ------------------------------------------------------------
+# SERIALIZER
+# ------------------------------------------------------------
+
+def serialize(entry):
+    return {
+        "id": entry.id,
+        "room": entry.room,
+        "shift": entry.shift,
+        "staff": entry.staff,
+        "tasks_completed": entry.tasks_completed,
+        "notes": entry.notes,
+        "timestamp": entry.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+    }
 
 # ------------------------------------------------------------
 # ROUTES
@@ -80,6 +93,7 @@ def submit_form(data: SubmissionRequest):
         shift=data.shift,
         staff=data.staff,
         tasks_completed=data.tasks_completed,
+        notes=data.notes
     )
     db.add(new_entry)
     db.commit()
@@ -87,11 +101,18 @@ def submit_form(data: SubmissionRequest):
     return {"message": "Submission saved", "id": new_entry.id}
 
 
+@app.get("/submissions")
+def get_submissions():
+    db = SessionLocal()
+    entries = db.query(Submission).order_by(Submission.timestamp.desc()).all()
+    return [serialize(e) for e in entries]
+
+
 @app.get("/all")
 def get_all():
     db = SessionLocal()
     entries = db.query(Submission).all()
-    return entries
+    return [serialize(e) for e in entries]
 
 
 @app.head("/")
@@ -102,16 +123,11 @@ def head_check():
 @app.get("/")
 def root():
     return {"message": "Cleaning Survey API with PostgreSQL is running"}
-    
-@app.get("/submissions")
-def get_submissions():
-    db = SessionLocal()
-    entries = db.query(Submission).order_by(Submission.timestamp.desc()).all()
-    return entries
-    
+
 # ------------------------------------------------------------
-# PDF EXPORT ROUTE
+# PDF EXPORT
 # ------------------------------------------------------------
+
 @app.get("/export/pdf")
 def export_pdf(request: Request):
     db = SessionLocal()
@@ -119,23 +135,19 @@ def export_pdf(request: Request):
 
     total_submissions = len(submissions)
 
-    # Average tasks
     if total_submissions > 0:
         avg_tasks = sum(len(s.tasks_completed) for s in submissions) / total_submissions
     else:
         avg_tasks = 0
 
-    # Shift counts
     shift_counts = {}
     for s in submissions:
         shift_counts[s.shift] = shift_counts.get(s.shift, 0) + 1
 
     top_shift = max(shift_counts, key=shift_counts.get) if shift_counts else "N/A"
 
-    # Placeholder compliance (can be replaced with real logic)
-    overall_compliance = 92
+    overall_compliance = 92  # placeholder
 
-    # Render HTML template
     html_content = templates.get_template("dashboard_pdf.html").render({
         "overall_compliance": overall_compliance,
         "total_submissions": total_submissions,
@@ -143,7 +155,6 @@ def export_pdf(request: Request):
         "avg_tasks": round(avg_tasks, 2)
     })
 
-    # Generate PDF
     pdf_bytes = HTML(string=html_content).write_pdf()
 
     return StreamingResponse(
