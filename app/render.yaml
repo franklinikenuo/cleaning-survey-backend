@@ -1,12 +1,15 @@
 services:
   - type: web
-    name: cleaning-survey-backend
+    name: cleaning-survey-api
     runtime: python
     plan: free
+
     buildCommand: pip install -r requirements.txt
+
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+
     envVars:
       - key: DATABASE_URL
         sync: false
-      - key: ALLOWED_ORIGINS
-        value: https://franklinkenuo.github.io,http://localhost:3000
+      - key: PYTHON_VERSION
+        value: 3.10.12
