@@ -17,8 +17,6 @@ import io
 # ------------------------------------------------------------
 # DATABASE SETUP
 # ------------------------------------------------------------
-# DATABASE SETUP
-# -----------------------------
 
 import os
 from sqlalchemy import create_engine
@@ -104,7 +102,13 @@ def head_check():
 @app.get("/")
 def root():
     return {"message": "Cleaning Survey API with PostgreSQL is running"}
-
+    
+@app.get("/submissions")
+def get_submissions():
+    db = SessionLocal()
+    entries = db.query(Submission).order_by(Submission.timestamp.desc()).all()
+    return entries
+    
 # ------------------------------------------------------------
 # PDF EXPORT ROUTE
 # ------------------------------------------------------------
