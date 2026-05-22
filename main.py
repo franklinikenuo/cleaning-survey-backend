@@ -101,3 +101,25 @@ def head_submissions():
 @app.get("/")
 def root():
     return {"message": "Cleaning Survey API with PostgreSQL is running"}
+    
+
+# ------------------------------------------------------------
+# PDF EXPORT ROUTE (WeasyPrint)
+# ------------------------------------------------------------
+from fastapi.responses import StreamingResponse
+from weasyprint import HTML
+import io
+
+@app.get("/export/pdf")
+def export_pdf():
+    html_content = """
+    <h1>Cleaning Compliance Dashboard</h1>
+    <p>This is a test PDF export using WeasyPrint.</p>
+    """
+    pdf = HTML(string=html_content).write_pdf()
+
+    return StreamingResponse(
+        io.BytesIO(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=dashboard.pdf"}
+    )
