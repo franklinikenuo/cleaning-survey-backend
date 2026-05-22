@@ -9,3 +9,4 @@ requests
 aiofiles
 sqlalchemy
 psycopg2-binary
+weasyprint
