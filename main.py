@@ -6,13 +6,16 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from typing import Dict
 from datetime import datetime
-
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, JSON
-from sqlalchemy.orm import sessionmaker, declarative_base
-
-from weasyprint import HTML
+import csv
 import io
 import os
+import datetime as dt
+
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, JSON, text
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from weasyprint import HTML
 
 # ------------------------------------------------------------
 # DATABASE SETUP
@@ -124,6 +127,48 @@ def head_check():
 def root():
     return {"message": "Cleaning Survey API with PostgreSQL is running"}
 
+# ------------------------------------------------------------
+# CSV EXPORT
+# ------------------------------------------------------------
+
+@app.get("/export-csv")
+def export_csv():
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT * FROM submissions"))
+        rows = result.fetchall()
+        headers = result.keys()
+
+    def generate():
+        yield ",".join(headers) + "\n"
+        for row in rows:
+            yield ",".join([str(x) for x in row]) + "\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=submissions.csv"}
+    )
+
+# ------------------------------------------------------------
+# DAILY ARCHIVE JOB
+# ------------------------------------------------------------
+
+def archive_daily():
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT * FROM submissions"))
+        rows = result.fetchall()
+        headers = result.keys()
+
+    filename = f"archive_{dt.date.today()}.csv"
+    with open(filename, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        for row in rows:
+            writer.writerow(row)
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(archive_daily, "cron", hour=0, minute=0)
+scheduler.start()
 
 # ------------------------------------------------------------
 # PDF EXPORT
@@ -162,4 +207,4 @@ def export_pdf(request: Request):
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=cleaning_dashboard.pdf"}
-    )
+)
