@@ -1,1 +1,1 @@
-# makes this a package
+# Makes the cleanup directory a package
