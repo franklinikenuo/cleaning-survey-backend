@@ -208,3 +208,195 @@ def export_pdf(request: Request):
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=cleaning_dashboard.pdf"}
 )
+# ------------------------------------------------------------
+# WEEKLY REPORT ENDPOINT
+# ------------------------------------------------------------
+
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
+import base64
+
+@app.get("/send-weekly-report")
+def send_weekly_report():
+    db = SessionLocal()
+
+    # Last 7 days
+    week_start = datetime.utcnow() - timedelta(days=7)
+    submissions = db.query(Submission).filter(Submission.timestamp >= week_start).all()
+
+    total = len(submissions)
+
+    # Compliance calculation
+    def is_clean(task_dict):
+        return all(v == "Y" for v in task_dict.values())
+
+    clean_count = sum(1 for s in submissions if is_clean(s.tasks_completed))
+    compliance = round((clean_count / total) * 100, 2) if total > 0 else 0
+
+    # Build PDF HTML
+    html_content = templates.get_template("dashboard_pdf.html").render({
+        "overall_compliance": compliance,
+        "total_submissions": total,
+        "top_shift": "Weekly Summary",
+        "avg_tasks": round(sum(len(s.tasks_completed) for s in submissions) / total, 2) if total else 0
+    })
+
+    pdf_bytes = HTML(string=html_content).write_pdf()
+
+    # Encode PDF for email
+    encoded_pdf = base64.b64encode(pdf_bytes).decode()
+
+    message = Mail(
+        from_email="no-reply@cleaning-survey.com",
+        to_emails="franklin.ikenuo@gdi.com",
+        subject="Weekly Cleaning Compliance Report",
+        html_content=f"""
+        <p>Hello Franklin,</p>
+        <p>Your weekly cleaning compliance report is ready.</p>
+        <p><strong>Total submissions:</strong> {total}</p>
+        <p><strong>Compliance:</strong> {compliance}%</p>
+        <p>The full PDF is attached.</p>
+        """
+    )
+
+    attachment = Attachment(
+        FileContent(encoded_pdf),
+        FileName("weekly_report.pdf"),
+        FileType("application/pdf"),
+        Disposition("attachment")
+    )
+
+    message.attachment = attachment
+
+    try:
+        sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
+        sg.send(message)
+        return {"status": "Weekly report sent", "records": total}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+        
+# ------------------------------------------------------------
+# MONTHLY REPORT ENDPOINT
+# ------------------------------------------------------------
+
+@app.get("/send-monthly-report")
+def send_monthly_report():
+    db = SessionLocal()
+
+    # Last 30 days
+    month_start = datetime.utcnow() - timedelta(days=30)
+    submissions = db.query(Submission).filter(Submission.timestamp >= month_start).all()
+
+    total = len(submissions)
+
+    # Compliance calculation
+    def is_clean(task_dict):
+        return all(v == "Y" for v in task_dict.values())
+
+    clean_count = sum(1 for s in submissions if is_clean(s.tasks_completed))
+    compliance = round((clean_count / total) * 100, 2) if total > 0 else 0
+
+    # Build PDF HTML
+    html_content = templates.get_template("dashboard_pdf.html").render({
+        "overall_compliance": compliance,
+        "total_submissions": total,
+        "top_shift": "Monthly Summary",
+        "avg_tasks": round(sum(len(s.tasks_completed) for s in submissions) / total, 2) if total else 0
+    })
+
+    pdf_bytes = HTML(string=html_content).write_pdf()
+
+    # Encode PDF for email
+    encoded_pdf = base64.b64encode(pdf_bytes).decode()
+
+    message = Mail(
+        from_email="no-reply@cleaning-survey.com",
+        to_emails="franklin.ikenuo@gdi.com",
+        subject="Monthly Cleaning Compliance Report",
+        html_content=f"""
+        <p>Hello Franklin,</p>
+        <p>Your monthly cleaning compliance report is ready.</p>
+        <p><strong>Total submissions:</strong> {total}</p>
+        <p><strong>Compliance:</strong> {compliance}%</p>
+        <p>The full PDF is attached.</p>
+        """
+    )
+
+    attachment = Attachment(
+        FileContent(encoded_pdf),
+        FileName("monthly_report.pdf"),
+        FileType("application/pdf"),
+        Disposition("attachment")
+    )
+
+    message.attachment = attachment
+
+    try:
+        sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
+        sg.send(message)
+        return {"status": "Monthly report sent", "records": total}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+# ------------------------------------------------------------
+# QUARTERLY REPORT ENDPOINT
+# ------------------------------------------------------------
+
+@app.get("/send-quarterly-report")
+def send_quarterly_report():
+    db = SessionLocal()
+
+    # Last 90 days
+    quarter_start = datetime.utcnow() - timedelta(days=90)
+    submissions = db.query(Submission).filter(Submission.timestamp >= quarter_start).all()
+
+    total = len(submissions)
+
+    # Compliance calculation
+    def is_clean(task_dict):
+        return all(v == "Y" for v in task_dict.values())
+
+    clean_count = sum(1 for s in submissions if is_clean(s.tasks_completed))
+    compliance = round((clean_count / total) * 100, 2) if total > 0 else 0
+
+    # Build PDF HTML
+    html_content = templates.get_template("dashboard_pdf.html").render({
+        "overall_compliance": compliance,
+        "total_submissions": total,
+        "top_shift": "Quarterly Summary",
+        "avg_tasks": round(sum(len(s.tasks_completed) for s in submissions) / total, 2) if total else 0
+    })
+
+    pdf_bytes = HTML(string=html_content).write_pdf()
+
+    # Encode PDF for email
+    encoded_pdf = base64.b64encode(pdf_bytes).decode()
+
+    message = Mail(
+        from_email="no-reply@cleaning-survey.com",
+        to_emails="franklin.ikenuo@gdi.com",
+        subject="Quarterly Cleaning Compliance Report",
+        html_content=f"""
+        <p>Hello Franklin,</p>
+        <p>Your quarterly cleaning compliance report is ready.</p>
+        <p><strong>Total submissions:</strong> {total}</p>
+        <p><strong>Compliance:</strong> {compliance}%</p>
+        <p>The full PDF is attached.</p>
+        """
+    )
+
+    attachment = Attachment(
+        FileContent(encoded_pdf),
+        FileName("quarterly_report.pdf"),
+        FileType("application/pdf"),
+        Disposition("attachment")
+    )
+
+    message.attachment = attachment
+
+    try:
+        sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
+        sg.send(message)
+        return {"status": "Quarterly report sent", "records": total}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
