@@ -11,29 +11,20 @@ import io
 import os
 import datetime as dt
 
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, JSON, text
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy import Column, Integer, String, DateTime, JSON, text
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from weasyprint import HTML
 
-# ------------------------------------------------------------
-# CLEANUP IMPORTS
-# ------------------------------------------------------------
+from database import engine, SessionLocal, Base
 from cleanup.cleanup_old_records import cleanup_old_records
 from cleanup.cleanup_logs import cleanup_logs
 
-# ------------------------------------------------------------
-# DATABASE SETUP
-# ------------------------------------------------------------
-
-DATABASE_URL = os.getenv("DATABASE_URL")
 CLEANUP_TOKEN = os.getenv("CLEANUP_TOKEN")
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
+# ------------------------------------------------------------
+# MODELS
+# ------------------------------------------------------------
 
 class Submission(Base):
     __tablename__ = "submissions"
@@ -80,7 +71,7 @@ class SubmissionRequest(BaseModel):
 # SERIALIZER
 # ------------------------------------------------------------
 
-def serialize(entry):
+def serialize(entry: Submission):
     return {
         "id": entry.id,
         "room": entry.room,
@@ -98,31 +89,40 @@ def serialize(entry):
 @app.post("/submit")
 def submit_form(data: SubmissionRequest):
     db = SessionLocal()
-    new_entry = Submission(
-        room=data.room,
-        shift=data.shift,
-        staff=data.staff,
-        tasks_completed=data.tasks_completed,
-        notes=data.notes
-    )
-    db.add(new_entry)
-    db.commit()
-    db.refresh(new_entry)
-    return {"message": "Submission saved", "id": new_entry.id}
+    try:
+        new_entry = Submission(
+            room=data.room,
+            shift=data.shift,
+            staff=data.staff,
+            tasks_completed=data.tasks_completed,
+            notes=data.notes
+        )
+        db.add(new_entry)
+        db.commit()
+        db.refresh(new_entry)
+        return {"message": "Submission saved", "id": new_entry.id}
+    finally:
+        db.close()
 
 
 @app.get("/submissions")
 def get_submissions():
     db = SessionLocal()
-    entries = db.query(Submission).order_by(Submission.timestamp.desc()).all()
-    return [serialize(e) for e in entries]
+    try:
+        entries = db.query(Submission).order_by(Submission.timestamp.desc()).all()
+        return [serialize(e) for e in entries]
+    finally:
+        db.close()
 
 
 @app.get("/all")
 def get_all():
     db = SessionLocal()
-    entries = db.query(Submission).all()
-    return [serialize(e) for e in entries]
+    try:
+        entries = db.query(Submission).all()
+        return [serialize(e) for e in entries]
+    finally:
+        db.close()
 
 
 @app.head("/")
@@ -157,7 +157,7 @@ def export_csv():
     )
 
 # ------------------------------------------------------------
-# DAILY ARCHIVE JOB (existing)
+# DAILY ARCHIVE JOB
 # ------------------------------------------------------------
 
 def archive_daily():
@@ -184,7 +184,10 @@ scheduler.start()
 @app.get("/export/pdf")
 def export_pdf(request: Request):
     db = SessionLocal()
-    submissions = db.query(Submission).all()
+    try:
+        submissions = db.query(Submission).all()
+    finally:
+        db.close()
 
     total_submissions = len(submissions)
     avg_tasks = (
@@ -216,7 +219,7 @@ def export_pdf(request: Request):
     )
 
 # ------------------------------------------------------------
-# CLEANUP ENDPOINTS (NEW)
+# CLEANUP ENDPOINTS
 # ------------------------------------------------------------
 
 def verify_token(request: Request):
@@ -246,4 +249,4 @@ def cleanup_logs_route(request: Request):
 # ------------------------------------------------------------
 # WEEKLY / MONTHLY / QUARTERLY / YEARLY REPORTS
 # ------------------------------------------------------------
-# (Your existing report code remains unchanged)
+# (Paste your existing report endpoints here unchanged)
