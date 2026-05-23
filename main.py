@@ -400,3 +400,65 @@ def send_quarterly_report():
         return {"status": "Quarterly report sent", "records": total}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
+# ------------------------------------------------------------
+# YEARLY REPORT ENDPOINT
+# ------------------------------------------------------------
+
+@app.get("/send-yearly-report")
+def send_yearly_report():
+    db = SessionLocal()
+
+    # Last 365 days
+    year_start = datetime.utcnow() - timedelta(days=365)
+    submissions = db.query(Submission).filter(Submission.timestamp >= year_start).all()
+
+    total = len(submissions)
+
+    # Compliance calculation
+    def is_clean(task_dict):
+        return all(v == "Y" for v in task_dict.values())
+
+    clean_count = sum(1 for s in submissions if is_clean(s.tasks_completed))
+    compliance = round((clean_count / total) * 100, 2) if total > 0 else 0
+
+    # Build PDF HTML
+    html_content = templates.get_template("dashboard_pdf.html").render({
+        "overall_compliance": compliance,
+        "total_submissions": total,
+        "top_shift": "Yearly Summary",
+        "avg_tasks": round(sum(len(s.tasks_completed) for s in submissions) / total, 2) if total else 0
+    })
+
+    pdf_bytes = HTML(string=html_content).write_pdf()
+
+    # Encode PDF for email
+    encoded_pdf = base64.b64encode(pdf_bytes).decode()
+
+    message = Mail(
+        from_email="no-reply@cleaning-survey.com",
+        to_emails="franklin.ikenuo@gdi.com",
+        subject="Yearly Cleaning Compliance Report",
+        html_content=f"""
+        <p>Hello Franklin,</p>
+        <p>Your yearly cleaning compliance report is ready.</p>
+        <p><strong>Total submissions:</strong> {total}</p>
+        <p><strong>Compliance:</strong> {compliance}%</p>
+        <p>The full PDF is attached.</p>
+        """
+    )
+
+    attachment = Attachment(
+        FileContent(encoded_pdf),
+        FileName("yearly_report.pdf"),
+        FileType("application/pdf"),
+        Disposition("attachment")
+    )
+
+    message.attachment = attachment
+
+    try:
+        sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
+        sg.send(message)
+        return {"status": "Yearly report sent", "records": total}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
