@@ -123,6 +123,15 @@ def head_check():
 @app.get("/")
 def root():
     return {"message": "Cleaning Survey API with PostgreSQL is running"}
+    
+    from sqlalchemy import text
+
+@app.get("/drop-submissions-table")
+def drop_table():
+    from database import engine
+    with engine.connect() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS submissions"))
+    return {"status": "table dropped"}
 
 # ------------------------------------------------------------
 # PDF EXPORT
