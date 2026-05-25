@@ -246,7 +246,136 @@ def cleanup_logs_route(request: Request):
     result = cleanup_logs()
     return {"status": "success", "message": result}
 
+
 # ------------------------------------------------------------
 # WEEKLY / MONTHLY / QUARTERLY / YEARLY REPORTS
 # ------------------------------------------------------------
-# (Paste your existing report endpoints here unchanged)
+
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
+import base64
+
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+REPORT_EMAIL = "franklin.ikenuo@gdi.com"
+
+
+def generate_report_pdf(start_date, end_date):
+    """Generate a PDF report for a given date range using the existing dashboard template."""
+    db = SessionLocal()
+    try:
+        submissions = db.query(Submission).filter(
+            Submission.timestamp >= start_date,
+            Submission.timestamp <= end_date
+        ).all()
+    finally:
+        db.close()
+
+    total_submissions = len(submissions)
+    avg_tasks = (
+        sum(len(s.tasks_completed) for s in submissions) / total_submissions
+        if total_submissions > 0 else 0
+    )
+
+    shift_counts = {}
+    for s in submissions:
+        shift_counts[s.shift] = shift_counts.get(s.shift, 0) + 1
+
+    top_shift = max(shift_counts, key=shift_counts.get) if shift_counts else "N/A"
+
+    overall_compliance = 92  # placeholder
+
+    html_content = templates.get_template("dashboard_pdf.html").render({
+        "overall_compliance": overall_compliance,
+        "total_submissions": total_submissions,
+        "top_shift": top_shift,
+        "avg_tasks": round(avg_tasks, 2),
+        "start_date": start_date.strftime("%Y-%m-%d"),
+        "end_date": end_date.strftime("%Y-%m-%d")
+    })
+
+    pdf_bytes = HTML(string=html_content).write_pdf()
+    return pdf_bytes
+
+
+def send_report_email(subject, pdf_bytes):
+    """Send a PDF report via SendGrid."""
+    message = Mail(
+        from_email="no-reply@cleaning-survey.com",
+        to_emails=REPORT_EMAIL,
+        subject=subject,
+        html_content=f"<p>Your report is attached.</p>"
+    )
+
+    encoded_pdf = base64.b64encode(pdf_bytes).decode()
+
+    attachment = Attachment(
+        FileContent(encoded_pdf),
+        FileName("report.pdf"),
+        FileType("application/pdf"),
+        Disposition("attachment")
+    )
+
+    message.attachment = attachment
+
+    try:
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        sg.send(message)
+        return "Email sent successfully"
+    except Exception as e:
+        return f"Error sending email: {str(e)}"
+
+
+# ------------------------------------------------------------
+# WEEKLY REPORT
+# ------------------------------------------------------------
+@app.get("/send-weekly-report")
+def send_weekly_report():
+    end_date = datetime.utcnow()
+    start_date = end_date - timedelta(days=7)
+
+    pdf_bytes = generate_report_pdf(start_date, end_date)
+    result = send_report_email("Weekly Cleaning Report", pdf_bytes)
+
+    return {"status": "success", "message": result}
+
+
+# ------------------------------------------------------------
+# MONTHLY REPORT
+# ------------------------------------------------------------
+@app.get("/send-monthly-report")
+def send_monthly_report():
+    end_date = datetime.utcnow()
+    start_date = end_date - timedelta(days=30)
+
+    pdf_bytes = generate_report_pdf(start_date, end_date)
+    result = send_report_email("Monthly Cleaning Report", pdf_bytes)
+
+    return {"status": "success", "message": result}
+
+
+# ------------------------------------------------------------
+# QUARTERLY REPORT
+# ------------------------------------------------------------
+@app.get("/send-quarterly-report")
+def send_quarterly_report():
+    end_date = datetime.utcnow()
+    start_date = end_date - timedelta(days=90)
+
+    pdf_bytes = generate_report_pdf(start_date, end_date)
+    result = send_report_email("Quarterly Cleaning Report", pdf_bytes)
+
+    return {"status": "success", "message": result}
+
+
+# ------------------------------------------------------------
+# YEARLY REPORT
+# ------------------------------------------------------------
+@app.get("/send-yearly-report")
+def send_yearly_report():
+    end_date = datetime.utcnow()
+    start_date = end_date - timedelta(days=365)
+
+    pdf_bytes = generate_report_pdf(start_date, end_date)
+    result = send_report_email("Yearly Cleaning Report", pdf_bytes)
+
+    return {"status": "success", "message": result}
