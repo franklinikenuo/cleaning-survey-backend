@@ -1,7 +1,7 @@
 # force rebuild
 services:
   - type: web
-    name: cleaning-survey-api
+    name: cleaning-survey-api-v2
     runtime: python
     plan: free
 
