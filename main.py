@@ -11,16 +11,15 @@ import os
 import base64
 import datetime as dt
 
-from sqlalchemy import Column, Integer, String, DateTime, JSON, text
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from database import engine, SessionLocal, Base
+from database import engine, SessionLocal, Base, Submission
 from cleanup.cleanup_old_records import cleanup_old_records
 from cleanup.cleanup_logs import cleanup_logs
 
-# ReportLab PDF generator (file-based)
 from dashboard_reportlab import generate_dashboard_pdf
 
 
@@ -34,20 +33,8 @@ REPORT_EMAIL = "franklin.ikenuo@gdi.com"
 
 
 # ------------------------------------------------------------
-# MODELS
+# INITIALIZE DATABASE
 # ------------------------------------------------------------
-
-class Submission(Base):
-    __tablename__ = "submissions"
-
-    id = Column(Integer, primary_key=True, index=True)
-    room = Column(String)
-    shift = Column(String)
-    staff = Column(String)
-    tasks_completed = Column(JSON)
-    notes = Column(String, default="")
-    timestamp = Column(DateTime, default=datetime.utcnow)
-
 
 Base.metadata.create_all(bind=engine)
 
