@@ -1,26 +1,38 @@
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
-from cleanup.utils import ensure_dir
+@app.get("/export/pdf")
+def export_pdf(request: Request):
+    db = SessionLocal()
+    try:
+        submissions = db.query(Submission).all()
+    finally:
+        db.close()
 
-def export_to_pdf(records, filepath):
-    ensure_dir(filepath.rsplit("/", 1)[0])
+    total_submissions = len(submissions)
+    avg_tasks = (
+        sum(len(s.tasks_completed) for s in submissions) / total_submissions
+        if total_submissions > 0 else 0
+    )
 
-    c = canvas.Canvas(filepath, pagesize=letter)
-    y = 750
+    shift_counts = {}
+    for s in submissions:
+        shift_counts[s.shift] = shift_counts.get(s.shift, 0) + 1
 
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(30, y, "Archived Cleaning Submissions")
-    y -= 30
+    top_shift = max(shift_counts, key=shift_counts.get) if shift_counts else "N/A"
+    overall_compliance = 92  # placeholder
 
-    c.setFont("Helvetica", 10)
+    # Generate PDF in /tmp (Render-safe)
+    filepath = "/tmp/dashboard_report.pdf"
 
-    for r in records:
-        line = f"{r['timestamp']} | {r['room']} | {r['staff']} | {r['shift']} | {r['tasks_completed']}"
-        c.drawString(30, y, line)
-        y -= 15
+    from app.app.dashboard_reportlab import generate_dashboard_pdf
+    generate_dashboard_pdf(
+        filepath,
+        overall_compliance,
+        total_submissions,
+        top_shift,
+        round(avg_tasks, 2)
+    )
 
-        if y < 50:
-            c.showPage()
-            y = 750
-
-    c.save()
+    return StreamingResponse(
+        open(filepath, "rb"),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=cleaning_dashboard.pdf"}
+    )
