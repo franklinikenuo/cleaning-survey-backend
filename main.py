@@ -1,7 +1,6 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from fastapi.templating import Jinja2Templates
 
 from pydantic import BaseModel
 from typing import Dict
@@ -9,10 +8,11 @@ from datetime import datetime, timedelta
 import csv
 import io
 import os
-import datetime as dt
 import base64
+import datetime as dt
 
 from sqlalchemy import Column, Integer, String, DateTime, JSON, text
+from sqlalchemy.orm import Session
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -20,8 +20,9 @@ from database import engine, SessionLocal, Base
 from cleanup.cleanup_old_records import cleanup_old_records
 from cleanup.cleanup_logs import cleanup_logs
 
-# NEW: ReportLab PDF generator
+# ReportLab PDF generator (file-based)
 from dashboard_reportlab import generate_dashboard_pdf
+
 
 # ------------------------------------------------------------
 # ENVIRONMENT VARIABLES
@@ -30,6 +31,7 @@ from dashboard_reportlab import generate_dashboard_pdf
 CLEANUP_TOKEN = os.getenv("CLEANUP_TOKEN")
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 REPORT_EMAIL = "franklin.ikenuo@gdi.com"
+
 
 # ------------------------------------------------------------
 # MODELS
@@ -46,7 +48,9 @@ class Submission(Base):
     notes = Column(String, default="")
     timestamp = Column(DateTime, default=datetime.utcnow)
 
+
 Base.metadata.create_all(bind=engine)
+
 
 # ------------------------------------------------------------
 # FASTAPI APP
@@ -62,7 +66,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-templates = Jinja2Templates(directory="app/app/templates")
+
+# ------------------------------------------------------------
+# DATABASE DEPENDENCY
+# ------------------------------------------------------------
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 
 # ------------------------------------------------------------
 # REQUEST MODEL
@@ -74,6 +89,7 @@ class SubmissionRequest(BaseModel):
     staff: str
     tasks_completed: Dict[str, str]
     notes: str = ""
+
 
 # ------------------------------------------------------------
 # SERIALIZER
@@ -90,47 +106,36 @@ def serialize(entry: Submission):
         "timestamp": entry.timestamp.strftime("%Y-%m-%d %H:%M:%S")
     }
 
+
 # ------------------------------------------------------------
 # ROUTES
 # ------------------------------------------------------------
 
 @app.post("/submit")
-def submit_form(data: SubmissionRequest):
-    db = SessionLocal()
-    try:
-        new_entry = Submission(
-            room=data.room,
-            shift=data.shift,
-            staff=data.staff,
-            tasks_completed=data.tasks_completed,
-            notes=data.notes
-        )
-        db.add(new_entry)
-        db.commit()
-        db.refresh(new_entry)
-        return {"message": "Submission saved", "id": new_entry.id}
-    finally:
-        db.close()
+def submit_form(data: SubmissionRequest, db: Session = Depends(get_db)):
+    new_entry = Submission(
+        room=data.room,
+        shift=data.shift,
+        staff=data.staff,
+        tasks_completed=data.tasks_completed,
+        notes=data.notes
+    )
+    db.add(new_entry)
+    db.commit()
+    db.refresh(new_entry)
+    return {"message": "Submission saved", "id": new_entry.id}
 
 
 @app.get("/submissions")
-def get_submissions():
-    db = SessionLocal()
-    try:
-        entries = db.query(Submission).order_by(Submission.timestamp.desc()).all()
-        return [serialize(e) for e in entries]
-    finally:
-        db.close()
+def get_submissions(db: Session = Depends(get_db)):
+    entries = db.query(Submission).order_by(Submission.timestamp.desc()).all()
+    return [serialize(e) for e in entries]
 
 
 @app.get("/all")
-def get_all():
-    db = SessionLocal()
-    try:
-        entries = db.query(Submission).all()
-        return [serialize(e) for e in entries]
-    finally:
-        db.close()
+def get_all(db: Session = Depends(get_db)):
+    entries = db.query(Submission).all()
+    return [serialize(e) for e in entries]
 
 
 @app.head("/")
@@ -141,6 +146,7 @@ def head_check():
 @app.get("/")
 def root():
     return {"message": "Cleaning Survey API with PostgreSQL is running"}
+
 
 # ------------------------------------------------------------
 # CSV EXPORT
@@ -164,6 +170,7 @@ def export_csv():
         headers={"Content-Disposition": "attachment; filename=submissions.csv"}
     )
 
+
 # ------------------------------------------------------------
 # DAILY ARCHIVE JOB
 # ------------------------------------------------------------
@@ -174,28 +181,26 @@ def archive_daily():
         rows = result.fetchall()
         headers = result.keys()
 
-    filename = f"archive_{dt.date.today()}.csv"
+    filename = f"/tmp/archive_{dt.date.today()}.csv"
     with open(filename, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(headers)
         for row in rows:
             writer.writerow(row)
 
+
 scheduler = BackgroundScheduler()
 scheduler.add_job(archive_daily, "cron", hour=0, minute=0)
 scheduler.start()
 
+
 # ------------------------------------------------------------
-# PDF EXPORT (REPORTLAB VERSION)
+# PDF EXPORT (REPORTLAB FILE-BASED)
 # ------------------------------------------------------------
 
 @app.get("/export/pdf")
-def export_pdf(request: Request):
-    db = SessionLocal()
-    try:
-        submissions = db.query(Submission).all()
-    finally:
-        db.close()
+def export_pdf(db: Session = Depends(get_db)):
+    submissions = db.query(Submission).all()
 
     total_submissions = len(submissions)
     avg_tasks = (
@@ -226,6 +231,7 @@ def export_pdf(request: Request):
         headers={"Content-Disposition": "attachment; filename=cleaning_dashboard.pdf"}
     )
 
+
 # ------------------------------------------------------------
 # CLEANUP ENDPOINTS
 # ------------------------------------------------------------
@@ -254,12 +260,14 @@ def cleanup_logs_route(request: Request):
     result = cleanup_logs()
     return {"status": "success", "message": result}
 
+
 # ------------------------------------------------------------
 # REPORT GENERATION (WEEKLY / MONTHLY / QUARTERLY / YEARLY)
 # ------------------------------------------------------------
 
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
+
 
 def generate_report_pdf(start_date, end_date):
     db = SessionLocal()
@@ -297,6 +305,7 @@ def generate_report_pdf(start_date, end_date):
     with open(filepath, "rb") as f:
         return f.read()
 
+
 def send_report_email(subject, pdf_bytes):
     message = Mail(
         from_email="no-reply@cleaning-survey.com",
@@ -323,6 +332,7 @@ def send_report_email(subject, pdf_bytes):
     except Exception as e:
         return f"Error sending email: {str(e)}"
 
+
 # ------------------------------------------------------------
 # REPORT ENDPOINTS
 # ------------------------------------------------------------
@@ -335,6 +345,7 @@ def send_weekly_report():
     result = send_report_email("Weekly Cleaning Report", pdf_bytes)
     return {"status": "success", "message": result}
 
+
 @app.get("/send-monthly-report")
 def send_monthly_report():
     end_date = datetime.utcnow()
@@ -343,6 +354,7 @@ def send_monthly_report():
     result = send_report_email("Monthly Cleaning Report", pdf_bytes)
     return {"status": "success", "message": result}
 
+
 @app.get("/send-quarterly-report")
 def send_quarterly_report():
     end_date = datetime.utcnow()
@@ -350,6 +362,7 @@ def send_quarterly_report():
     pdf_bytes = generate_report_pdf(start_date, end_date)
     result = send_report_email("Quarterly Cleaning Report", pdf_bytes)
     return {"status": "success", "message": result}
+
 
 @app.get("/send-yearly-report")
 def send_yearly_report():
