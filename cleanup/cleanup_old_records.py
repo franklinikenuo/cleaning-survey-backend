@@ -1,7 +1,7 @@
 from sqlalchemy import text
 from database import engine
 from cleanup.export_csv import export_to_csv
-from cleanup.export_pdf import export_to_pdf
+
 from cleanup.utils import make_archive_paths
 
 
