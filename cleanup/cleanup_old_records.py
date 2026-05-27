@@ -1,11 +1,11 @@
 import os
 from datetime import datetime, timedelta
 from sqlalchemy import text
-from database import SessionLocal
+from database import SessionLocal, Submission
 from dashboard_reportlab import generate_dashboard_pdf
 from cleanup.export_csv import export_to_csv
 from cleanup.utils import make_archive_paths
-from main import Submission  # ensures correct model
+
 
 def cleanup_old_records():
     """
@@ -47,25 +47,35 @@ def cleanup_old_records():
         example_ts = records[0].timestamp
         csv_path, pdf_path = make_archive_paths(example_ts)
 
-        # Ensure directory exists
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
 
         # 3. Export CSV
         export_to_csv(dict_records, csv_path)
 
-        # 4. Export PDF (ReportLab)
+        # 4. Compute KPIs for PDF
+        total_submissions = len(records)
+
+        avg_tasks = (
+            sum(len(r.tasks_completed) for r in records) / total_submissions
+            if total_submissions > 0 else 0
+        )
+
+        shift_counts = {}
+        for r in records:
+            shift_counts[r.shift] = shift_counts.get(r.shift, 0) + 1
+
+        top_shift = max(shift_counts, key=shift_counts.get)
+
+        # 5. Export PDF
         generate_dashboard_pdf(
             pdf_path,
             overall_compliance=92,
-            total_submissions=len(records),
-            top_shift=max(
-                {r.shift: dict_records.count(r.shift) for r in records},
-                key=lambda k: dict_records.count(k)
-            ),
-            avg_tasks=sum(len(r.tasks_completed) for r in records) / len(records)
+            total_submissions=total_submissions,
+            top_shift=top_shift,
+            avg_tasks=round(avg_tasks, 2)
         )
 
-        # 5. Delete old records
+        # 6. Delete old records
         for r in records:
             db.delete(r)
 
