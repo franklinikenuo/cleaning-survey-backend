@@ -250,7 +250,40 @@ def export_pdf(db: Session = Depends(get_db)):
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=cleaning_dashboard.pdf"}
     )
+from fastapi import Body
+import base64
+from reportlab.lib.utils import ImageReader
 
+@app.post("/export/pdf-with-charts")
+def export_pdf_with_charts(
+    room_chart: str = Body(...),
+    shift_chart: str = Body(...),
+    tasks_chart: str = Body(...)
+):
+    filepath = "/tmp/dashboard_report_with_charts.pdf"
+
+    # Decode base64 images
+    room_img = ImageReader(io.BytesIO(base64.b64decode(room_chart.split(",")[1])))
+    shift_img = ImageReader(io.BytesIO(base64.b64decode(shift_chart.split(",")[1])))
+    tasks_img = ImageReader(io.BytesIO(base64.b64decode(tasks_chart.split(",")[1])))
+
+    # Generate PDF
+    generate_dashboard_pdf(
+        filepath,
+        overall_compliance=92,  # placeholder
+        total_submissions=0,    # placeholder
+        top_shift="N/A",        # placeholder
+        avg_tasks=0,            # placeholder
+        room_chart=room_img,
+        shift_chart=shift_img,
+        tasks_chart=tasks_img
+    )
+
+    return StreamingResponse(
+        open(filepath, "rb"),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=dashboard_with_charts.pdf"}
+    )
 
 # ------------------------------------------------------------
 # CLEANUP ENDPOINTS
