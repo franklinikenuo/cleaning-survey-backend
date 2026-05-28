@@ -33,6 +33,34 @@ REPORT_EMAIL = "franklin.ikenuo@gdi.com"
 
 
 # ------------------------------------------------------------
+# ALLOWED ROOMS (NEW UPDATED LIST)
+# ------------------------------------------------------------
+
+allowed_rooms = [
+    # Labs
+    "Andrology/Embryology Lab",
+    "Blood Lab",
+
+    # Recovery / Procedure
+    "Recovery Room",
+    "Procedure Room",
+
+    # Ultrasound Rooms
+    "Ultrasound Room 1",
+    "Ultrasound Room 2",
+    "Ultrasound Room 3",
+    "Ultrasound Room 4",
+    "Ultrasound Room 5",
+    "Ultrasound Room 6",
+    "Ultrasound Room 7",
+
+    # Collection Rooms
+    "Collection Room 1",
+    "Collection Room 2"
+]
+
+
+# ------------------------------------------------------------
 # INITIALIZE DATABASE
 # ------------------------------------------------------------
 
@@ -100,6 +128,11 @@ def serialize(entry: Submission):
 
 @app.post("/submit")
 def submit_form(data: SubmissionRequest, db: Session = Depends(get_db)):
+
+    # Validate room name
+    if data.room not in allowed_rooms:
+        raise HTTPException(status_code=400, detail=f"Invalid room: {data.room}")
+
     new_entry = Submission(
         room=data.room,
         shift=data.shift,
