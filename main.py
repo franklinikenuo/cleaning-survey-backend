@@ -424,3 +424,10 @@ def send_yearly_report():
     pdf_bytes = generate_report_pdf(start_date, end_date)
     result = send_report_email("Yearly Cleaning Report", pdf_bytes)
     return {"status": "success", "message": result}
+@app.on_event("startup")
+def startup_event():
+    try:
+        with engine.connect() as conn:
+            print("Connected to Supabase Postgres")
+    except Exception as e:
+        print("Database connection failed:", e)
