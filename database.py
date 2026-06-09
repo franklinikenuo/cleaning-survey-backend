@@ -3,15 +3,17 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, JSON
 from sqlalchemy.orm import sessionmaker, declarative_base
 from datetime import datetime
 
-# Load DATABASE_URL from environment variables (Render will provide it)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Updated engine for Supabase PostgreSQL
+# Correct Supabase + Render engine
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
     pool_size=5,
-    max_overflow=10
+    max_overflow=10,
+    connect_args={
+        "sslmode": "require"   # ⭐ REQUIRED for Supabase
+    }
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
