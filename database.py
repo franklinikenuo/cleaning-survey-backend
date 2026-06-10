@@ -4,15 +4,14 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from datetime import datetime
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-
-# Correct Supabase + Render engine
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
     connect_args={
-        "sslmode": "require"   # ⭐ REQUIRED for Supabase
+        "sslmode": "require",
+        "options": "-c inet_server_addr=0.0.0.0"
     }
 )
 
