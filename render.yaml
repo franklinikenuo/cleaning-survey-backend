@@ -1,7 +1,7 @@
 # force rebuild
 services:
   - type: web
-    name: cleaning-survey-api-v2
+    name: cleaning-survey-api-v2-x6sf
     runtime: python
     plan: free
 
@@ -14,8 +14,14 @@ services:
 
     envVars:
       - key: DATABASE_URL
-        sync: true
+        sync: false
       - key: SENDGRID_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: PYTHON_VERSION
         value: 3.10.12
